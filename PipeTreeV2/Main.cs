@@ -28,7 +28,7 @@ using Application = Autodesk.Revit.Creation.Application;
 
 namespace PipeTreeV2
 {
-
+    
     public class ModelNode
     {
         public ElementId ModelElementId { get; set; }
@@ -74,13 +74,14 @@ namespace PipeTreeV2
                 {
                     if (nextconnector.Domain != Domain.DomainUndefined && nextconnector.Owner != null)
                     {
-                        if (nextconnector.Owner is PipingSystem)
+                        if (nextconnector.Owner is PipingSystem || nextconnector.Owner.Id == connector.Owner.Id)
                         {
                             continue;
                         }
+                        
                         else if (!Neighbour.Contains(nextconnector.Owner.Id))
                         {
-                            if (nextconnector.Direction == FlowDirectionType.Out || nextconnector.Direction == FlowDirectionType.Bidirectional)
+                            if (nextconnector.Direction == FlowDirectionType.Out )
                             {
                                 Neighbour.Add(nextconnector.Owner.Id);
                             }
@@ -99,12 +100,16 @@ namespace PipeTreeV2
                 {
                     if (nextconnector.Domain != Domain.DomainUndefined && nextconnector.Owner != null)
                     {
-                        ElementId ownerId = nextconnector.Owner.Id;
-                        if (!Connections.ContainsKey(ownerId))
+                        if (nextconnector.Direction == FlowDirectionType.Out)
                         {
-                            Connections[ownerId] = new List<ElementId>();
+                            ElementId ownerId = nextconnector.Owner.Id;
+                            if (!Connections.ContainsKey(ownerId))
+                            {
+                                Connections[ownerId] = new List<ElementId>();
+                            }
+                            Connections[ownerId].Add(connector.Owner.Id); // Добавляем связь в словарь
                         }
-                        Connections[ownerId].Add(connector.Owner.Id); // Добавляем связь в словарь
+                        
                     }
                 }
             }
@@ -178,10 +183,14 @@ namespace PipeTreeV2
 
 
         }
+
+       
     }
 
 
-
+    
+        
+    
 
 
 
@@ -210,7 +219,67 @@ namespace PipeTreeV2
 
     public class Main : IExternalCommand
     {
+        public static List<ModelNode> Sort(List<ModelNode> nodes)
+        {
+            // Подготовка структуры данных
+            Dictionary<ElementId, int> inDegree = new Dictionary<ElementId, int>();
+            Dictionary<ElementId, ModelNode> nodeLookup = new Dictionary<ElementId, ModelNode>();
 
+            // Заполнение входной степени для каждого узла и создание словаря для поиска
+            foreach (var node in nodes)
+            {
+                nodeLookup[node.ModelElementId] = node;
+                inDegree[node.ModelElementId] = 0; // Изначально входная степень равна 0
+            }
+
+            foreach (var node in nodes)
+            {
+                foreach (var neighbour in node.Neighbour)
+                {
+                    if (inDegree.ContainsKey(neighbour))
+                    {
+                        inDegree[neighbour]++; // Увеличиваем входную степень для соседей
+                    }
+                }
+            }
+
+            // Используем очередь для хранения узлов с нулевой входной степенью
+            Queue<ModelNode> zeroInDegreeQueue = new Queue<ModelNode>();
+            foreach (var node in nodes)
+            {
+                if (inDegree[node.ModelElementId] == 0)
+                {
+                    zeroInDegreeQueue.Enqueue(node);
+                }
+            }
+
+            List<ModelNode> sortedList = new List<ModelNode>();
+
+            while (zeroInDegreeQueue.Count > 0)
+            {
+                var currentNode = zeroInDegreeQueue.Dequeue();
+                sortedList.Add(currentNode);
+
+                foreach (var neighbour in currentNode.Neighbour)
+                {
+                    inDegree[neighbour]--;
+
+                    // Если входная степень соседа стала равной нулю, добавляем его в очередь
+                    if (inDegree[neighbour] == 0 && nodeLookup.ContainsKey(neighbour))
+                    {
+                        zeroInDegreeQueue.Enqueue(nodeLookup[neighbour]);
+                    }
+                }
+            }
+
+            // Проверка на наличие цикла в графе
+            if (sortedList.Count < nodes.Count)
+            {
+                throw new Exception("Graph has at least one cycle. Topological sorting is not possible.");
+            }
+
+            return sortedList; // Возвращаем отсортированный список
+        }
 
         static AddInId AddInId = new AddInId(new Guid("CDFCB89B-70AD-452A-91A7-EB47D70781BF"));
 
@@ -297,8 +366,41 @@ namespace PipeTreeV2
                     nodes.Add(model);
                 }
             }
+            
+            foreach (var el in nodes)
+            {
+                string a = $"{el.ModelElementId};";
+                foreach (var n in el.Neighbour)
+                {
+                    string b = $"{n};";
+                    a += b;
+                }
+                csvcontent += a + "\n";
+            }
+            System.Windows.Forms.SaveFileDialog saveFileDialog = new System.Windows.Forms.SaveFileDialog();
 
 
+            saveFileDialog.Filter = "CSV files (*.csv)|*.csv";
+            saveFileDialog.Title = "Save CSV File";
+
+            if (saveFileDialog.ShowDialog() == DialogResult.OK)
+            {
+                try
+                {
+                    using (StreamWriter writer = new StreamWriter(saveFileDialog.FileName))
+                    {
+                        writer.Write(csvcontent);
+                    }
+
+                    Console.WriteLine("CSV file saved successfully.");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Error saving CSV file: " + ex.Message);
+                }
+
+            }
+            
 
 
 
