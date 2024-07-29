@@ -34,13 +34,13 @@ namespace PipeTreeV2
         public ElementId ModelElementId { get; set; }
         public int Counter { get; set; }
         public List<ElementId> Neighbour { get; set; } = new List<ElementId>();
+        public int ElementCounter { get; set; }
+        public Dictionary<ElementId, List<ElementId>> Connections { get; set; } = new Dictionary<ElementId, List<ElementId>>();
 
-        public Dictionary<ElementId, List<ElementId>> Connections { get; set; }
-
-        public ModelNode(Autodesk.Revit.DB.Document document, ElementId elementId, int counter)
+        public ModelNode(Autodesk.Revit.DB.Document document, ElementId elementId)
         {
             ModelElementId = elementId;
-            Counter = counter;
+
             Element element = document.GetElement(ModelElementId);
             ConnectorSet connectorSet = GetConnectorSet(element); // Вынесение логики получения ConnectorSet в отдельный метод  
             if (connectorSet != null)
@@ -107,133 +107,182 @@ namespace PipeTreeV2
                 }
             }
         }
-
-        // Вызов нового метода для заполнения Connections
-
-
-    }
-
-    
-
-
-    
-
-        
-        
-
-        
-
-        
-       
-    public class InfoContext
-    {
-        public ContextViewModel ContextViewModel { get; set; }
-
-        public InfoContext(IList<string> systemnames, Autodesk.Revit.DB.Document doc)
+        public void RecursiveTraversal(Autodesk.Revit.DB.Document document, List<ElementId> visitedIds)
         {
-            ContextViewModel = new ContextViewModel(systemnames, doc);
-        }
-    }
-    [Autodesk.Revit.Attributes.Transaction(Autodesk.Revit.Attributes.TransactionMode.Manual)]
-    [Autodesk.Revit.Attributes.Regeneration(Autodesk.Revit.Attributes.RegenerationOption.Manual)]
+            // Добавляем текущий элемент в список посещенных
+            visitedIds.Add(ModelElementId);
 
-
-
-
-
-
-    public class Main : IExternalCommand
-    {
-
-
-        static AddInId AddInId = new AddInId(new Guid("CDFCB89B-70AD-452A-91A7-EB47D70781BF"));
-
-        static IList<Element> GetSystems(Autodesk.Revit.DB.Document document)
-        {
-            IList<Element> systems = new FilteredElementCollector(document).OfCategory(BuiltInCategory.OST_PipingSystem).WhereElementIsNotElementType().ToElements();
-            return systems;
-        }
-
-
-
-
-
-        public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
-        {
-            UIApplication uiapp = commandData.Application;
-            UIDocument uidoc = uiapp.ActiveUIDocument;
-            Autodesk.Revit.DB.Document doc = uidoc.Document;
-
-
-
-
-
-            ///
-            List<string> systemnames = new List<string>();
-            IList<Element> pipes = new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_PipeCurves).WhereElementIsNotElementType().ToElements();
-            foreach (Element pipe in pipes)
+            // Обходим соседние элементы
+            foreach (ElementId neighbourId in Neighbour)
             {
-                var newpipe = pipe as Pipe;
-                var fI = newpipe as MEPCurve;
-                foreach (Parameter parameter in newpipe.Parameters)
+                if (!visitedIds.Contains(neighbourId))
                 {
-                    if (parameter.Definition.Name.Equals("Сокращение для системы"))
+                    // Получаем модель узла по соседнему id (необходимо создать соответствующий метод)
+                    ModelNode neighbourNode = GetModelNodeById(document, neighbourId);
+
+                    if (neighbourNode != null)
                     {
-                        string system = parameter.AsString();
-                        if (system != null)
-                        {
-                            if (!systemnames.Contains(system))
-                            {
-                                systemnames.Add(system);
-                            }
-                        }
+                        // Здесь можно добавлять логику для работы с соседом, например, вывод его id
+                        //Console.WriteLine($"Обход элемента: {neighbourNode.ModelElementId}");
+
+                        // Рекурсивно вызываем метод для соседнего узла
+                        neighbourNode.RecursiveTraversal(document, visitedIds);
+
+                        // Вызов нового метода для заполнения Connections
+
+
                     }
                 }
             }
 
+        }
 
-            Window window = new Window();
-            InfoContext dataContext = new InfoContext(systemnames, doc);
-            window.DataContext = dataContext;
-            window.ShowDialog();
-            ///
-
-            var systems = GetSystems(doc);
-            List<Element> selectedsystems = new List<Element>();
-            //Тут фильтруем системы по наличию в имени сокращения
-            foreach (var sys in systems)
+        private ModelNode GetModelNodeById(Autodesk.Revit.DB.Document document, ElementId id)
+        {
+            Element element = document.GetElement(id);
+            if (element != null && element.Category.Name != "Трубопроводная система")
             {
-                if(sys.Name.Contains(dataContext.ContextViewModel.SelectedSystemName))
-                {
-                    selectedsystems.Add(sys);
-                }
+                ModelNode modelNode = new ModelNode(document, id);
+                return modelNode;
+            }
+            else
+            {
+                return null; // Верните найденный узел или null, если он не найден
             }
 
-            foreach (var sys in selectedsystems)
+
+          
+        }
+
+
+
+
+
+
+
+
+
+
+
+
+        public class InfoContext
+        {
+            public ContextViewModel ContextViewModel { get; set; }
+
+            public InfoContext(IList<string> systemnames, Autodesk.Revit.DB.Document doc)
             {
-                List<ModelNode> startconnectors = new List<ModelNode>();
-               var connectors = new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_MechanicalEquipment).WhereElementIsNotElementType().ToElementIds();
-                int counter = 1;
-                foreach(ElementId element in connectors)
+                ContextViewModel = new ContextViewModel(systemnames, doc);
+            }
+        }
+        [Autodesk.Revit.Attributes.Transaction(Autodesk.Revit.Attributes.TransactionMode.Manual)]
+        [Autodesk.Revit.Attributes.Regeneration(Autodesk.Revit.Attributes.RegenerationOption.Manual)]
+
+
+
+
+
+
+        public class Main : IExternalCommand
+        {
+
+
+            static AddInId AddInId = new AddInId(new Guid("CDFCB89B-70AD-452A-91A7-EB47D70781BF"));
+
+            static IList<Element> GetSystems(Autodesk.Revit.DB.Document document)
+            {
+                IList<Element> systems = new FilteredElementCollector(document).OfCategory(BuiltInCategory.OST_PipingSystem).WhereElementIsNotElementType().ToElements();
+                return systems;
+            }
+
+
+
+
+
+            public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
+            {
+                UIApplication uiapp = commandData.Application;
+                UIDocument uidoc = uiapp.ActiveUIDocument;
+                Autodesk.Revit.DB.Document doc = uidoc.Document;
+
+
+
+
+
+                ///
+                List<string> systemnames = new List<string>();
+                IList<Element> pipes = new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_PipeCurves).WhereElementIsNotElementType().ToElements();
+                foreach (Element pipe in pipes)
                 {
-                    if (doc.GetElement(element).Name.Contains("Виртуальный коннектор"))
+                    var newpipe = pipe as Pipe;
+                    var fI = newpipe as MEPCurve;
+                    foreach (Parameter parameter in newpipe.Parameters)
                     {
-                        ModelNode modelNode = new ModelNode(doc, element, counter);
-                        startconnectors.Add(modelNode);
-                    }    
+                        if (parameter.Definition.Name.Equals("Сокращение для системы"))
+                        {
+                            string system = parameter.AsString();
+                            if (system != null)
+                            {
+                                if (!systemnames.Contains(system))
+                                {
+                                    systemnames.Add(system);
+                                }
+                            }
+                        }
+                    }
                 }
 
+
+                UserControl1 window = new UserControl1();
+                InfoContext dataContext = new InfoContext(systemnames, doc);
+                window.DataContext = dataContext;
+                window.ShowDialog();
+                ///
+
+                var systems = GetSystems(doc);
+                List<Element> selectedsystems = new List<Element>();
+                //Тут фильтруем системы по наличию в имени сокращения
+                foreach (var sys in systems)
+                {
+                    if (sys.Name.Contains(dataContext.ContextViewModel.SelectedSystemName))
+                    {
+                        selectedsystems.Add(sys);
+                    }
+                }
+
+                foreach (var sys in selectedsystems)
+                {
+                    List<ModelNode> startconnectors = new List<ModelNode>();
+                    List<List<ElementId>> visitednodessys = new List<List<ElementId>>();
+                    var connectors = new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_MechanicalEquipment).WhereElementIsNotElementType().ToElementIds();
+                    int counter = 1;
+                    foreach (ElementId element in connectors)
+                    {
+                        if (doc.GetElement(element).Name.Contains("Виртуальный коннектор"))
+                        {
+                            ModelNode modelNode = new ModelNode(doc, element);
+                            startconnectors.Add(modelNode);
+                            counter++;
+                        }
+                    }
+                    foreach (var startconnector in startconnectors)
+                    {
+                        List<ElementId> visitednodes = new List<ElementId>();
+                        startconnector.RecursiveTraversal(doc, visitednodes);
+                        visitednodessys.Add(visitednodes);
+                    }
+                    
+                }
+
+
+
+
+
+
+
+
+
+                return Result.Succeeded;
             }
-               
-               
-
-            
-
-
-           
-            
-
-            return Result.Succeeded;
         }
     }
 }
