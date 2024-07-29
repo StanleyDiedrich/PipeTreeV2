@@ -14,7 +14,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
-
+using System.Windows.Forms;
 using System.Windows.Media.Media3D;
 using System.Xml.Linq;
 using Autodesk.Revit.Creation;
@@ -23,7 +23,7 @@ using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Plumbing;
 using Autodesk.Revit.DB.Structure;
 using Autodesk.Revit.UI;
-
+using Microsoft.Win32;
 using Application = Autodesk.Revit.Creation.Application;
 
 namespace PipeTreeV2
@@ -36,12 +36,14 @@ namespace PipeTreeV2
         public List<ElementId> Neighbour { get; set; } = new List<ElementId>();
         public int ElementCounter { get; set; }
         public Dictionary<ElementId, List<ElementId>> Connections { get; set; } = new Dictionary<ElementId, List<ElementId>>();
-
+        public string SystemName { get; set; }
+        public bool IsVisited { get; set; }
         public ModelNode(Autodesk.Revit.DB.Document document, ElementId elementId)
         {
             ModelElementId = elementId;
 
             Element element = document.GetElement(ModelElementId);
+            SystemName = element.LookupParameter("Имя системы").AsString();
             ConnectorSet connectorSet = GetConnectorSet(element); // Вынесение логики получения ConnectorSet в отдельный метод  
             if (connectorSet != null)
             {
@@ -109,32 +111,54 @@ namespace PipeTreeV2
         }
         public void RecursiveTraversal(Autodesk.Revit.DB.Document document, List<ElementId> visitedIds)
         {
-            // Добавляем текущий элемент в список посещенных
+            // Добавляем текущий элемент в список посещенных 
             visitedIds.Add(ModelElementId);
 
-            // Обходим соседние элементы
+            // Получаем имя системы для текущего элемента
+            string systemname = document.GetElement(ModelElementId).LookupParameter("Имя системы").AsString();
+
+            // Обходим соседние элементы 
             foreach (ElementId neighbourId in Neighbour)
             {
+                // Проверяем, был ли сосед уже посещен
                 if (!visitedIds.Contains(neighbourId))
                 {
-                    // Получаем модель узла по соседнему id (необходимо создать соответствующий метод)
+                    // Получаем модель узла по соседнему id 
                     ModelNode neighbourNode = GetModelNodeById(document, neighbourId);
 
-                    if (neighbourNode != null)
+                    // Проверяем, существует ли узел и соответствует ли его имя системы
+                    if (neighbourNode != null && neighbourNode.SystemName == systemname)
                     {
-                        // Здесь можно добавлять логику для работы с соседом, например, вывод его id
+                        // Здесь можно добавлять логику для работы с соседом, например, вывод его id 
                         //Console.WriteLine($"Обход элемента: {neighbourNode.ModelElementId}");
 
-                        // Рекурсивно вызываем метод для соседнего узла
+                        // Рекурсивно вызываем метод для соседнего узла 
                         neighbourNode.RecursiveTraversal(document, visitedIds);
 
-                        // Вызов нового метода для заполнения Connections
-
-
+                        // Здесь можно добавить логику для заполнения Connections, если необходимо
+                        //FillConnectionsWithNeighbour(document,neighbourNode);
+                    }
+                    else
+                    {
+                        return;
                     }
                 }
             }
+        }
 
+        // Метод для заполнения связей (Connections) с соседним узлом
+        private void FillConnectionsWithNeighbour( Autodesk.Revit.DB.Document document, ModelNode neighbourNode)
+        {
+            // Реализуйте логику добавления связей
+            // Например, добавьте neighbourNode в коллекцию Connections текущего узла
+            Element element = document.GetElement(neighbourNode.ModelElementId);
+            ConnectorSet connectorSet = GetConnectorSet(element); // Вынесение логики получения ConnectorSet в отдельный метод  
+            if (connectorSet != null)
+            {
+                PopulateVertices(connectorSet); // Вынесение логики заполнения Vertices в отдельный метод 
+                PopulateConnections(connectorSet);
+            }
+            
         }
 
         private ModelNode GetModelNodeById(Autodesk.Revit.DB.Document document, ElementId id)
@@ -142,6 +166,7 @@ namespace PipeTreeV2
             Element element = document.GetElement(id);
             if (element != null && element.Category.Name != "Трубопроводная система")
             {
+
                 ModelNode modelNode = new ModelNode(document, id);
                 return modelNode;
             }
@@ -151,138 +176,169 @@ namespace PipeTreeV2
             }
 
 
-          
+
+        }
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+    public class InfoContext
+    {
+        public ContextViewModel ContextViewModel { get; set; }
+
+        public InfoContext(IList<string> systemnames, Autodesk.Revit.DB.Document doc)
+        {
+            ContextViewModel = new ContextViewModel(systemnames, doc);
+        }
+    }
+    [Autodesk.Revit.Attributes.Transaction(Autodesk.Revit.Attributes.TransactionMode.Manual)]
+    [Autodesk.Revit.Attributes.Regeneration(Autodesk.Revit.Attributes.RegenerationOption.Manual)]
+
+
+
+
+
+
+    public class Main : IExternalCommand
+    {
+
+
+        static AddInId AddInId = new AddInId(new Guid("CDFCB89B-70AD-452A-91A7-EB47D70781BF"));
+
+        static IList<Element> GetSystems(Autodesk.Revit.DB.Document document)
+        {
+            IList<Element> systems = new FilteredElementCollector(document).OfCategory(BuiltInCategory.OST_PipingSystem).WhereElementIsNotElementType().ToElements();
+            return systems;
         }
 
 
 
 
 
-
-
-
-
-
-
-
-        public class InfoContext
+        public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
-            public ContextViewModel ContextViewModel { get; set; }
+            UIApplication uiapp = commandData.Application;
+            UIDocument uidoc = uiapp.ActiveUIDocument;
+            Autodesk.Revit.DB.Document doc = uidoc.Document;
 
-            public InfoContext(IList<string> systemnames, Autodesk.Revit.DB.Document doc)
+
+
+
+
+            ///
+            List<string> systemnames = new List<string>();
+            IList<Element> pipes = new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_PipeCurves).WhereElementIsNotElementType().ToElements();
+            foreach (Element pipe in pipes)
             {
-                ContextViewModel = new ContextViewModel(systemnames, doc);
-            }
-        }
-        [Autodesk.Revit.Attributes.Transaction(Autodesk.Revit.Attributes.TransactionMode.Manual)]
-        [Autodesk.Revit.Attributes.Regeneration(Autodesk.Revit.Attributes.RegenerationOption.Manual)]
-
-
-
-
-
-
-        public class Main : IExternalCommand
-        {
-
-
-            static AddInId AddInId = new AddInId(new Guid("CDFCB89B-70AD-452A-91A7-EB47D70781BF"));
-
-            static IList<Element> GetSystems(Autodesk.Revit.DB.Document document)
-            {
-                IList<Element> systems = new FilteredElementCollector(document).OfCategory(BuiltInCategory.OST_PipingSystem).WhereElementIsNotElementType().ToElements();
-                return systems;
-            }
-
-
-
-
-
-            public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
-            {
-                UIApplication uiapp = commandData.Application;
-                UIDocument uidoc = uiapp.ActiveUIDocument;
-                Autodesk.Revit.DB.Document doc = uidoc.Document;
-
-
-
-
-
-                ///
-                List<string> systemnames = new List<string>();
-                IList<Element> pipes = new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_PipeCurves).WhereElementIsNotElementType().ToElements();
-                foreach (Element pipe in pipes)
+                var newpipe = pipe as Pipe;
+                var fI = newpipe as MEPCurve;
+                foreach (Parameter parameter in newpipe.Parameters)
                 {
-                    var newpipe = pipe as Pipe;
-                    var fI = newpipe as MEPCurve;
-                    foreach (Parameter parameter in newpipe.Parameters)
+                    if (parameter.Definition.Name.Equals("Сокращение для системы"))
                     {
-                        if (parameter.Definition.Name.Equals("Сокращение для системы"))
+                        string system = parameter.AsString();
+                        if (system != null)
                         {
-                            string system = parameter.AsString();
-                            if (system != null)
+                            if (!systemnames.Contains(system))
                             {
-                                if (!systemnames.Contains(system))
-                                {
-                                    systemnames.Add(system);
-                                }
+                                systemnames.Add(system);
                             }
                         }
                     }
                 }
-
-
-                UserControl1 window = new UserControl1();
-                InfoContext dataContext = new InfoContext(systemnames, doc);
-                window.DataContext = dataContext;
-                window.ShowDialog();
-                ///
-
-                var systems = GetSystems(doc);
-                List<Element> selectedsystems = new List<Element>();
-                //Тут фильтруем системы по наличию в имени сокращения
-                foreach (var sys in systems)
-                {
-                    if (sys.Name.Contains(dataContext.ContextViewModel.SelectedSystemName))
-                    {
-                        selectedsystems.Add(sys);
-                    }
-                }
-
-                foreach (var sys in selectedsystems)
-                {
-                    List<ModelNode> startconnectors = new List<ModelNode>();
-                    List<List<ElementId>> visitednodessys = new List<List<ElementId>>();
-                    var connectors = new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_MechanicalEquipment).WhereElementIsNotElementType().ToElementIds();
-                    int counter = 1;
-                    foreach (ElementId element in connectors)
-                    {
-                        if (doc.GetElement(element).Name.Contains("Виртуальный коннектор"))
-                        {
-                            ModelNode modelNode = new ModelNode(doc, element);
-                            startconnectors.Add(modelNode);
-                            counter++;
-                        }
-                    }
-                    foreach (var startconnector in startconnectors)
-                    {
-                        List<ElementId> visitednodes = new List<ElementId>();
-                        startconnector.RecursiveTraversal(doc, visitednodes);
-                        visitednodessys.Add(visitednodes);
-                    }
-                    
-                }
-
-
-
-
-
-
-
-
-
-                return Result.Succeeded;
             }
+
+
+            UserControl1 window = new UserControl1();
+            InfoContext dataContext = new InfoContext(systemnames, doc);
+            window.DataContext = dataContext;
+            window.ShowDialog();
+            ///
+
+            var systems = GetSystems(doc);
+            List<Element> selectedsystems = new List<Element>();
+            //Тут фильтруем системы по наличию в имени сокращения
+            foreach (var sys in systems)
+            {
+                if (sys.Name.Contains(dataContext.ContextViewModel.SelectedSystemName))
+                {
+                    selectedsystems.Add(sys);
+                }
+            }
+            
+            string csvcontent = "";
+            List<ModelNode> nodes = new List<ModelNode>();
+            foreach (var sys in selectedsystems)
+            {
+               
+                List<ModelNode> startconnectors = new List<ModelNode>();
+                var connectors = new FilteredElementCollector(doc)
+                                .OfCategory(BuiltInCategory.OST_MechanicalEquipment)
+                                .WhereElementIsNotElementType()
+                                .ToElementIds();
+                var pipingNetwork = ((PipingSystem)sys).PipingNetwork;
+                foreach(var connector in connectors)
+                {
+                    ModelNode model = new ModelNode(doc, connector);
+                    nodes.Add(model);
+                }
+                foreach (Element element in pipingNetwork)
+                {
+                    ModelNode model = new ModelNode(doc, element.Id);
+                    nodes.Add(model);
+                }
+            }
+
+
+
+
+
+            /*int branchcounter = 0;
+            foreach (var group in sysconnectors)
+            {
+                int counter2 = 0;
+                foreach (var element in group)
+                {
+                    string a = $"{branchcounter};{counter2};{element}" + "\n";
+                    csvcontent += a;
+                    counter2++;
+                }
+                branchcounter++;
+            }
+            System.Windows.Forms.SaveFileDialog saveFileDialog = new System.Windows.Forms.SaveFileDialog();
+
+
+            saveFileDialog.Filter = "CSV files (*.csv)|*.csv";
+            saveFileDialog.Title = "Save CSV File";
+
+            if (saveFileDialog.ShowDialog() == DialogResult.OK)
+            {
+                try
+                {
+                    using (StreamWriter writer = new StreamWriter(saveFileDialog.FileName))
+                    {
+                        writer.Write(csvcontent);
+                    }
+
+                    Console.WriteLine("CSV file saved successfully.");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Error saving CSV file: " + ex.Message);
+                }
+
+            }*/
+            return Result.Succeeded;
         }
+        
     }
 }
