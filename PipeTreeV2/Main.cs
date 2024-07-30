@@ -29,6 +29,143 @@ using Application = Autodesk.Revit.Creation.Application;
 namespace PipeTreeV2
 {
 
+    public class ModelElement
+    {
+        public ElementId ModelElementId { get; set; }
+        
+        public string ModelVolume { get; set; }
+        public double ModelDiameter { get; set; }
+        public double ModelLength { get; set; }
+
+        public string ModelTrack { get; set; }
+        public string ModelLvl { get; set; }
+        public int ModelTrackNumber { get; set; }
+        public int ModelBranchNumber { get; set; }
+        public string ModelName { get; set; }
+
+        public string Type { get; set; }
+
+        public static double ConvertToDouble(string input)
+        {
+            // Проверяем, содержится ли в строке символ "ø"
+            if (input.Contains("ø"))
+            {
+                // Разделяем строку по символу '-'
+                string[] parts = input.Split('-');
+
+                // Берем первый элемент и удаляем "ø" и " мм"
+                string firstPart = parts[0].Replace("ø", "").Replace(" мм", "").Trim();
+
+                // Пробуем преобразовать в double
+                if (double.TryParse(firstPart, out double result))
+                {
+                    return result;
+                }
+            }
+
+            // Если преобразование не удалось, возвращаем 0 или можно обработать ошибку по-другому
+            return 0;
+        }
+
+        public ModelElement(Autodesk.Revit.DB.Document document, ElementId elementId, int branchcounter, int counter )
+        {
+            ModelElementId = elementId;
+
+            Element modelelement = document.GetElement(ModelElementId);
+            if (modelelement is Pipe || modelelement is FamilyInstance)
+            {
+                if (modelelement.LookupParameter("Старт_расчета") != null && modelelement.LookupParameter("Старт_расчета").AsString() == "1")
+                {
+
+                    Type = "ОЦК";
+
+                }
+                else
+                {
+                    Type = "ВЦК";
+                }
+
+
+
+                if (document.GetElement(ModelElementId).LookupParameter("Длина") != null)
+                {
+                    ModelLength = document.GetElement(ModelElementId).LookupParameter("Длина").AsDouble() * 304.8;
+                }
+                else
+                {
+                    ModelLength = 0;
+                }
+                //modelElement2.ModelLength = document.GetElement(elId).LookupParameter("Длина").AsDouble() * 304.8;
+                ModelName = document.GetElement(ModelElementId).Name;
+                if (document.GetElement(ModelElementId).LookupParameter("Базовый уровень") != null)
+                {
+                    ModelLvl = document.GetElement(ModelElementId).LookupParameter("Базовый уровень").AsValueString();
+                }
+
+                else
+                {
+                    ModelLvl = document.GetElement(ModelElementId).LookupParameter("Уровень").AsValueString();
+                }
+
+                ModelTrack = document.GetElement(ModelElementId).LookupParameter("Имя системы").AsString();
+                if (document.GetElement(ModelElementId).LookupParameter("Расход") != null)
+                {
+                    ModelVolume = document.GetElement(ModelElementId).LookupParameter("Расход").AsValueString();
+                }
+                else if (document.GetElement(ModelElementId).LookupParameter("ADSK_Расход жидкости") != null)
+                {
+                    ModelVolume = document.GetElement(ModelElementId).LookupParameter("ADSK_Расход жидкости").AsValueString();
+                }
+                else
+                {
+                    ModelVolume = "-";
+                    /* FamilyInstance familyInstance = document.GetElement(ModelElementId) as FamilyInstance;
+                     MEPModel mepModel = familyInstance.MEPModel;
+                     var connectorset = mepModel.ConnectorManager.Connectors;
+
+                     foreach (Connector connector in connectorset)
+                     {
+                         // Предполагается, что ModelVolume - это переменная типа double или float
+                         double modelVolume = connector.Flow; // Вычисляем объем
+                         ModelVolume = modelVolume; // Преобразуем в строку
+
+                         // Если нужно сохранять string, можете использовать переменную modelVolumeString, иначе храните в формате double
+                     }*/
+                }
+
+                /*else
+                {
+                    ModelVolume = "-";
+                }*/
+                if (document.GetElement(ModelElementId).LookupParameter("Диаметр") != null && document.GetElement(ModelElementId).LookupParameter("Диаметр").AsDouble() != 0)
+                {
+                    ModelDiameter = document.GetElement(ModelElementId).LookupParameter("Диаметр").AsDouble() * 304.8;
+                }
+                else if (document.GetElement(ModelElementId).LookupParameter("Условный диаметр") != null && document.GetElement(ModelElementId).LookupParameter("Условный диаметр").AsDouble() != 0)
+                {
+                    ModelDiameter = document.GetElement(ModelElementId).LookupParameter("Условный диаметр").AsDouble() * 304.8;
+                }
+                else if (document.GetElement(ModelElementId).LookupParameter("D") != null && document.GetElement(ModelElementId).LookupParameter("D").AsDouble() != 0)
+                {
+                    ModelDiameter = document.GetElement(ModelElementId).LookupParameter("D").AsDouble() * 304.8;
+                }
+                else if (document.GetElement(ModelElementId).LookupParameter("Размер") != null)
+                {
+                    string size = document.GetElement(ModelElementId).LookupParameter("Размер").AsString();
+                    ModelDiameter = ConvertToDouble(size);
+                }
+                else
+                {
+                    ModelDiameter = 0;
+                }
+                ModelBranchNumber = branchcounter;
+                ModelTrackNumber = counter;
+            }
+
+
+        }
+
+    }
 
 
     public class Node
@@ -293,21 +430,41 @@ namespace PipeTreeV2
 
                 
             }
+
+            List<List<ModelElement>> listofmodelElements = new List<List<ModelElement>>();
             int branchcounter = 0;
             foreach (var startconnectors in nodes)
             {
-                
+                int counter = 0;
+                List<ModelElement> modelelements = new List<ModelElement>();
                 foreach (var startconnector in startconnectors)
                 {
 
-                    string a = $"{branchcounter};{startconnector.ElementId};" + "\n";
-                    csvcontent += a;
+                    ModelElement modelElement = new ModelElement(doc, startconnector.ElementId, branchcounter, counter );
 
+                    modelelements.Add(modelElement);
 
-
+                    counter++;
                 }
                 branchcounter++;
+                if (modelelements.Any(x => x.Type == "ОЦК"))
+                {
+                    foreach (var modelelement in modelelements)
+                    {
+                        modelelement.Type = "ОЦК";
+                    }
+                }
+                listofmodelElements.Add(modelelements);
+            }
+            
 
+            foreach (var modelelements in listofmodelElements)
+            {
+                foreach (var modelelement in modelelements)
+                {
+                    string a = $"{modelelement.ModelElementId};{modelelement.ModelTrack};{modelelement.ModelLvl};{modelelement.ModelTrackNumber};{modelelement.ModelTrack}-{modelelement.ModelLvl}-{modelelement.ModelBranchNumber}-{modelelement.ModelTrackNumber};{modelelement.ModelName};{modelelement.ModelDiameter};{modelelement.ModelLength};{modelelement.ModelVolume};{modelelement.Type};\n";
+                    csvcontent += a;
+                }
             }
             System.Windows.Forms.SaveFileDialog saveFileDialog = new System.Windows.Forms.SaveFileDialog();
 
