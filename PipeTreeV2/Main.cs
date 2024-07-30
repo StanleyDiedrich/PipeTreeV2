@@ -28,169 +28,118 @@ using Application = Autodesk.Revit.Creation.Application;
 
 namespace PipeTreeV2
 {
-    
-    public class ModelNode
+
+
+
+    public class Node
     {
-        public ElementId ModelElementId { get; set; }
-        public int Counter { get; set; }
-        public List<ElementId> Neighbour { get; set; } = new List<ElementId>();
-        public int ElementCounter { get; set; }
-        public Dictionary<ElementId, List<ElementId>> Connections { get; set; } = new Dictionary<ElementId, List<ElementId>>();
-        public string SystemName { get; set; }
-        public bool IsVisited { get; set; }
-        public ModelNode(Autodesk.Revit.DB.Document document, ElementId elementId)
-        {
-            ModelElementId = elementId;
+        public ElementId ElementId;
+        public ElementId Neighbourgh;
 
-            Element element = document.GetElement(ModelElementId);
-            SystemName = element.LookupParameter("Имя системы").AsString();
-            ConnectorSet connectorSet = GetConnectorSet(element); // Вынесение логики получения ConnectorSet в отдельный метод  
-            if (connectorSet != null)
-            {
-                PopulateVertices(connectorSet); // Вынесение логики заполнения Vertices в отдельный метод 
-                PopulateConnections(connectorSet);
-            }
-        }
-        private ConnectorSet GetConnectorSet(Element element)
+        public Node(Autodesk.Revit.DB.Document doc, ElementId elementId, PipeSystemType pipeSystemType)
         {
-            if (element is FamilyInstance familyInstance)
-            {
-                return familyInstance.MEPModel?.ConnectorManager.Connectors;
-            }
-            else if (element is Pipe pipe)
-            {
-                return pipe.ConnectorManager.Connectors;
-            }
-
-            return null; // Не найден соответствующий ConnectorSet 
+            ElementId = elementId;
+            Neighbourgh = FindNachbar(doc, elementId, pipeSystemType);
         }
 
-        private void PopulateVertices(ConnectorSet connectorSet)
+        public ElementId FindNachbar(Autodesk.Revit.DB.Document doc, ElementId elementId, PipeSystemType pipeSystemType)
         {
-            foreach (Connector connector in connectorSet)
+            Element element = doc.GetElement(elementId);
+            MEPModel mepModel = null;
+            ConnectorSet connectorSet = null;
+            ElementId foundedelementId = null;
+
+            try
             {
-                ConnectorSet nextconnectors = connector.AllRefs;
-                foreach (Connector nextconnector in nextconnectors)
+                if (element is FamilyInstance fi)
                 {
-                    if (nextconnector.Domain != Domain.DomainUndefined && nextconnector.Owner != null)
+                    mepModel = fi.MEPModel;
+                    connectorSet = mepModel.ConnectorManager.Connectors;
+                }
+
+                if (element is Pipe pipe)
+                {
+                    connectorSet = pipe.ConnectorManager.Connectors;
+                }
+                else if (element is FlexDuct flexDuct)
+                {
+                    connectorSet = flexDuct.ConnectorManager.Connectors;
+                }
+
+                foreach (Connector connector in connectorSet)
+                {
+                    double connectorFlow = connector.Flow;
+                    if (connector.PipeSystemType == pipeSystemType)
                     {
-                        if (nextconnector.Owner is PipingSystem || nextconnector.Owner.Id == connector.Owner.Id)
+                        ConnectorSet nextConnectors = connector.AllRefs;
+
+                        foreach (Connector nextConnector in nextConnectors)
                         {
-                            continue;
-                        }
-                        
-                        else if (!Neighbour.Contains(nextconnector.Owner.Id))
-                        {
-                            if (nextconnector.Direction == FlowDirectionType.Out )
+                            // Игнорируем если это PipingSystem
+                            if (doc.GetElement(nextConnector.Owner.Id) is PipingSystem)
                             {
-                                Neighbour.Add(nextconnector.Owner.Id);
+                                continue;
                             }
-
-                        }
-                    }
-                }
-            }
-        }
-        private void PopulateConnections(ConnectorSet connectorSet)
-        {
-            foreach (Connector connector in connectorSet)
-            {
-                ConnectorSet nextconnectors = connector.AllRefs;
-                foreach (Connector nextconnector in nextconnectors)
-                {
-                    if (nextconnector.Domain != Domain.DomainUndefined && nextconnector.Owner != null)
-                    {
-                        if (nextconnector.Direction == FlowDirectionType.Out)
-                        {
-                            ElementId ownerId = nextconnector.Owner.Id;
-                            if (!Connections.ContainsKey(ownerId))
+                            else if (nextConnector.Owner.Id == elementId)
                             {
-                                Connections[ownerId] = new List<ElementId>();
+                                continue; // Игнорируем те же элементы
                             }
-                            Connections[ownerId].Add(connector.Owner.Id); // Добавляем связь в словарь
+                            else if (nextConnectors.Size < 1)
+                            {
+                                continue;
+                            }
+                            else
+                            {
+                                if (nextConnector.Domain == Domain.DomainHvac || nextConnector.Domain == Domain.DomainPiping)
+                                {
+                                    double nextConnectorFlow = nextConnector.Flow;
+
+                                    // Обработка в зависимости от типа системы
+                                    if (pipeSystemType == PipeSystemType.SupplyHydronic)
+                                    {
+                                        if (nextConnector.Direction == FlowDirectionType.Out)
+                                        {
+                                            // Сравниваем потоки
+                                            if (nextConnectorFlow >= connectorFlow)
+                                            {
+                                                foundedelementId = nextConnector.Owner.Id;
+                                                return foundedelementId;
+                                            }
+                                        }
+                                    }
+                                    else if (pipeSystemType == PipeSystemType.ReturnHydronic)
+                                    {
+                                        if (nextConnector.Direction == FlowDirectionType.In)
+                                        {
+                                            foundedelementId = nextConnector.Owner.Id;
+                                            return foundedelementId;
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        
                     }
                 }
             }
-        }
-        public void RecursiveTraversal(Autodesk.Revit.DB.Document document, List<ElementId> visitedIds)
-        {
-            // Добавляем текущий элемент в список посещенных 
-            visitedIds.Add(ModelElementId);
-
-            // Получаем имя системы для текущего элемента
-            string systemname = document.GetElement(ModelElementId).LookupParameter("Имя системы").AsString();
-
-            // Обходим соседние элементы 
-            foreach (ElementId neighbourId in Neighbour)
+            catch
             {
-                // Проверяем, был ли сосед уже посещен
-                if (!visitedIds.Contains(neighbourId))
-                {
-                    // Получаем модель узла по соседнему id 
-                    ModelNode neighbourNode = GetModelNodeById(document, neighbourId);
-
-                    // Проверяем, существует ли узел и соответствует ли его имя системы
-                    if (neighbourNode != null && neighbourNode.SystemName == systemname)
-                    {
-                        // Здесь можно добавлять логику для работы с соседом, например, вывод его id 
-                        //Console.WriteLine($"Обход элемента: {neighbourNode.ModelElementId}");
-
-                        // Рекурсивно вызываем метод для соседнего узла 
-                        neighbourNode.RecursiveTraversal(document, visitedIds);
-
-                        // Здесь можно добавить логику для заполнения Connections, если необходимо
-                        //FillConnectionsWithNeighbour(document,neighbourNode);
-                    }
-                    else
-                    {
-                        return;
-                    }
-                }
-            }
-        }
-
-        // Метод для заполнения связей (Connections) с соседним узлом
-        private void FillConnectionsWithNeighbour( Autodesk.Revit.DB.Document document, ModelNode neighbourNode)
-        {
-            // Реализуйте логику добавления связей
-            // Например, добавьте neighbourNode в коллекцию Connections текущего узла
-            Element element = document.GetElement(neighbourNode.ModelElementId);
-            ConnectorSet connectorSet = GetConnectorSet(element); // Вынесение логики получения ConnectorSet в отдельный метод  
-            if (connectorSet != null)
-            {
-                PopulateVertices(connectorSet); // Вынесение логики заполнения Vertices в отдельный метод 
-                PopulateConnections(connectorSet);
-            }
-            
-        }
-
-        private ModelNode GetModelNodeById(Autodesk.Revit.DB.Document document, ElementId id)
-        {
-            Element element = document.GetElement(id);
-            if (element != null && element.Category.Name != "Трубопроводная система")
-            {
-
-                ModelNode modelNode = new ModelNode(document, id);
-                return modelNode;
-            }
-            else
-            {
-                return null; // Верните найденный узел или null, если он не найден
+                // Тут можно было бы добавить обработку исключений
             }
 
-
-
+            return null; // Возвращаем null, если ничего не найдено
         }
-
-       
     }
 
 
-    
-        
-    
+
+
+
+
+
+
+
+
+
 
 
 
@@ -219,67 +168,7 @@ namespace PipeTreeV2
 
     public class Main : IExternalCommand
     {
-        public static List<ModelNode> Sort(List<ModelNode> nodes)
-        {
-            // Подготовка структуры данных
-            Dictionary<ElementId, int> inDegree = new Dictionary<ElementId, int>();
-            Dictionary<ElementId, ModelNode> nodeLookup = new Dictionary<ElementId, ModelNode>();
 
-            // Заполнение входной степени для каждого узла и создание словаря для поиска
-            foreach (var node in nodes)
-            {
-                nodeLookup[node.ModelElementId] = node;
-                inDegree[node.ModelElementId] = 0; // Изначально входная степень равна 0
-            }
-
-            foreach (var node in nodes)
-            {
-                foreach (var neighbour in node.Neighbour)
-                {
-                    if (inDegree.ContainsKey(neighbour))
-                    {
-                        inDegree[neighbour]++; // Увеличиваем входную степень для соседей
-                    }
-                }
-            }
-
-            // Используем очередь для хранения узлов с нулевой входной степенью
-            Queue<ModelNode> zeroInDegreeQueue = new Queue<ModelNode>();
-            foreach (var node in nodes)
-            {
-                if (inDegree[node.ModelElementId] == 0)
-                {
-                    zeroInDegreeQueue.Enqueue(node);
-                }
-            }
-
-            List<ModelNode> sortedList = new List<ModelNode>();
-
-            while (zeroInDegreeQueue.Count > 0)
-            {
-                var currentNode = zeroInDegreeQueue.Dequeue();
-                sortedList.Add(currentNode);
-
-                foreach (var neighbour in currentNode.Neighbour)
-                {
-                    inDegree[neighbour]--;
-
-                    // Если входная степень соседа стала равной нулю, добавляем его в очередь
-                    if (inDegree[neighbour] == 0 && nodeLookup.ContainsKey(neighbour))
-                    {
-                        zeroInDegreeQueue.Enqueue(nodeLookup[neighbour]);
-                    }
-                }
-            }
-
-            // Проверка на наличие цикла в графе
-            if (sortedList.Count < nodes.Count)
-            {
-                throw new Exception("Graph has at least one cycle. Topological sorting is not possible.");
-            }
-
-            return sortedList; // Возвращаем отсортированный список
-        }
 
         static AddInId AddInId = new AddInId(new Guid("CDFCB89B-70AD-452A-91A7-EB47D70781BF"));
 
@@ -335,6 +224,7 @@ namespace PipeTreeV2
 
             var systems = GetSystems(doc);
             List<Element> selectedsystems = new List<Element>();
+            var flowdirectiontype = (((MEPSystem)systems.First() as PipingSystem).SystemType);
             //Тут фильтруем системы по наличию в имени сокращения
             foreach (var sys in systems)
             {
@@ -343,78 +233,65 @@ namespace PipeTreeV2
                     selectedsystems.Add(sys);
                 }
             }
-            
+
             string csvcontent = "";
-            List<ModelNode> nodes = new List<ModelNode>();
-            foreach (var sys in selectedsystems)
+
+            var connectors = new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_MechanicalEquipment).WhereElementIsNotElementType().ToElementIds();
+            List<List<Node>> nodes = new List<List<Node>>();
+
+            // Итерируемся по каждому элементу из коллекции connectors
+            foreach (ElementId connector in connectors)
             {
+                List<Node> foundedNodes = new List<Node>();
+
+                // Создаем новый узел
+                Node newNode = new Node(doc, connector, flowdirectiontype);
+                foundedNodes.Add(newNode); // Добавляем новый узел в список найденных узлов
+
+                int counter = 0;
+
+                // Цикл для проверки соседних узлов, ограничиваем 1000 итерациями
+                do
+                {
+                    // Получаем следующий узел (соседний)
+                    ElementId newConnector = newNode.Neighbourgh;
+
+                    // Создаем новый узел на основе соседнего элемента
+                    newNode = new Node(doc, newConnector, flowdirectiontype);
+                    foundedNodes.Add(newNode); // Добавляем соседний узел
+
+                    counter++;
+                }
+                while (newNode.Neighbourgh != null && counter < 1000); // Выход из цикла если достигнуто 1000 итераций
+
+                nodes.Add(foundedNodes);
+
+
+
+
+
+
+
+                
+
+
+
+
+
                
-                List<ModelNode> startconnectors = new List<ModelNode>();
-                var connectors = new FilteredElementCollector(doc)
-                                .OfCategory(BuiltInCategory.OST_MechanicalEquipment)
-                                .WhereElementIsNotElementType()
-                                .ToElementIds();
-                var pipingNetwork = ((PipingSystem)sys).PipingNetwork;
-                foreach(var connector in connectors)
-                {
-                    ModelNode model = new ModelNode(doc, connector);
-                    nodes.Add(model);
-                }
-                foreach (Element element in pipingNetwork)
-                {
-                    ModelNode model = new ModelNode(doc, element.Id);
-                    nodes.Add(model);
-                }
             }
-            
-            foreach (var el in nodes)
+            foreach (var startconnectors in nodes)
             {
-                string a = $"{el.ModelElementId};";
-                foreach (var n in el.Neighbour)
+                foreach (var startconnector in startconnectors)
                 {
-                    string b = $"{n};";
-                    a += b;
-                }
-                csvcontent += a + "\n";
-            }
-            System.Windows.Forms.SaveFileDialog saveFileDialog = new System.Windows.Forms.SaveFileDialog();
 
-
-            saveFileDialog.Filter = "CSV files (*.csv)|*.csv";
-            saveFileDialog.Title = "Save CSV File";
-
-            if (saveFileDialog.ShowDialog() == DialogResult.OK)
-            {
-                try
-                {
-                    using (StreamWriter writer = new StreamWriter(saveFileDialog.FileName))
-                    {
-                        writer.Write(csvcontent);
-                    }
-
-                    Console.WriteLine("CSV file saved successfully.");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("Error saving CSV file: " + ex.Message);
-                }
-
-            }
-            
-
-
-
-            /*int branchcounter = 0;
-            foreach (var group in sysconnectors)
-            {
-                int counter2 = 0;
-                foreach (var element in group)
-                {
-                    string a = $"{branchcounter};{counter2};{element}" + "\n";
+                    string a = $"{startconnector.ElementId};{startconnector.Neighbourgh}" + "\n";
                     csvcontent += a;
-                    counter2++;
+
+
+
                 }
-                branchcounter++;
+
             }
             System.Windows.Forms.SaveFileDialog saveFileDialog = new System.Windows.Forms.SaveFileDialog();
 
@@ -438,9 +315,11 @@ namespace PipeTreeV2
                     Console.WriteLine("Error saving CSV file: " + ex.Message);
                 }
 
-            }*/
+            }
+
             return Result.Succeeded;
         }
-        
     }
 }
+
+
