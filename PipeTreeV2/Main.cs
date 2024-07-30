@@ -237,60 +237,76 @@ namespace PipeTreeV2
             string csvcontent = "";
 
             var connectors = new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_MechanicalEquipment).WhereElementIsNotElementType().ToElementIds();
+
             List<List<Node>> nodes = new List<List<Node>>();
 
             // Итерируемся по каждому элементу из коллекции connectors
             foreach (ElementId connector in connectors)
             {
+                // Создаем новый список для найденных узлов для текущего коннектора
                 List<Node> foundedNodes = new List<Node>();
 
                 // Создаем новый узел
                 Node newNode = new Node(doc, connector, flowdirectiontype);
-                foundedNodes.Add(newNode); // Добавляем новый узел в список найденных узлов
+                foundedNodes.Add(newNode); // Добавляем начальный узел в список найденных узлов
 
                 int counter = 0;
 
-                // Цикл для проверки соседних узлов, ограничиваем 1000 итерациями
+                // Цикл для проверки соседних узлов, ограничиваем 1000 итерациями 
                 do
                 {
-                    // Получаем следующий узел (соседний)
+                    // Получаем следующий узел (соседний) 
                     ElementId newConnector = newNode.Neighbourgh;
+                    bool existsInAnyList = false;
 
-                    // Создаем новый узел на основе соседнего элемента
-                    newNode = new Node(doc, newConnector, flowdirectiontype);
-                    foundedNodes.Add(newNode); // Добавляем соседний узел
+                    foreach (var listOfNodes in nodes)
+                    {
+                        // Используем LINQ для быстрой проверки наличия currentId 
+                        if (listOfNodes.Any(node => node.ElementId.Equals(newConnector)))
+                        {
+                            existsInAnyList = true;
+                            break; // Если найдено хотя бы одно совпадение, выходим из цикла 
+                        }
+                    }
+
+                    // Создаем новый узел только если соседний узел не найден в существующих
+                    if (!existsInAnyList && newConnector != null)
+                    {
+                        // Создаем новый узел на основе соседнего элемента 
+                        newNode = new Node(doc, newConnector, flowdirectiontype);
+                        foundedNodes.Add(newNode); // Добавляем соседний узел 
+                    }
+                    else
+                    {
+                        break; // Выходим из цикла, если соседний узел уже существует или равен null
+                    }
 
                     counter++;
                 }
-                while (newNode.Neighbourgh != null && counter < 1000); // Выход из цикла если достигнуто 1000 итераций
-
+                
+                while (newNode.Neighbourgh != null && counter < 100); // Выход из цикла если достигнуто 1000 итераций 
                 nodes.Add(foundedNodes);
-
-
-
-
-
+                
 
 
                 
 
-
-
-
-
-               
+                
             }
+            int branchcounter = 0;
             foreach (var startconnectors in nodes)
             {
+                
                 foreach (var startconnector in startconnectors)
                 {
 
-                    string a = $"{startconnector.ElementId};{startconnector.Neighbourgh}" + "\n";
+                    string a = $"{branchcounter};{startconnector.ElementId};" + "\n";
                     csvcontent += a;
 
 
 
                 }
+                branchcounter++;
 
             }
             System.Windows.Forms.SaveFileDialog saveFileDialog = new System.Windows.Forms.SaveFileDialog();
@@ -316,7 +332,6 @@ namespace PipeTreeV2
                 }
 
             }
-
             return Result.Succeeded;
         }
     }
