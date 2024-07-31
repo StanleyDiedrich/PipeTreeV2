@@ -311,7 +311,9 @@ namespace PipeTreeV2
 
         static IList<Element> GetSystems(Autodesk.Revit.DB.Document document)
         {
+            
             IList<Element> systems = new FilteredElementCollector(document).OfCategory(BuiltInCategory.OST_PipingSystem).WhereElementIsNotElementType().ToElements();
+            
             return systems;
         }
 
@@ -360,8 +362,17 @@ namespace PipeTreeV2
             ///
 
             var systems = GetSystems(doc);
+            List<Element> newsystems = new List<Element>();
             List<Element> selectedsystems = new List<Element>();
-            var flowdirectiontype = (((MEPSystem)systems.First() as PipingSystem).SystemType);
+            string selectedsystem = dataContext.ContextViewModel.SelectedSystemName;
+            foreach (var system in systems)
+            {
+                if (system.Name.Contains(selectedsystem))
+                {
+                    newsystems.Add(system);
+                }
+            }
+            var flowdirectiontype = (((MEPSystem)newsystems.First() as PipingSystem).SystemType);
             //Тут фильтруем системы по наличию в имени сокращения
             foreach (var sys in systems)
             {
